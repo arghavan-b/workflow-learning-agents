@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "workflow-learning-agents"
+version = "0.1.0"
+description = "Demo2Skill: learning reusable workflow skills from browser demonstration traces."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "playwright>=1.44",
+  "pydantic>=2.5",
+  "pytest-playwright>=0.7.1",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+llm = ["anthropic>=0.40"]
+screenvlm = ["transformers>=4.45", "torch>=2.2", "pillow>=10.0"]
+
+[project.scripts]
+demo2skill-record = "demo2skill.recorder.playwright_recorder:main"
+demo2skill-normalize = "demo2skill.trace.normalize:main"
+demo2skill-induce = "demo2skill.induction.workflow_generator:main"
+demo2skill-run = "demo2skill.executor.cli:main"
+demo2skill-video2action = "demo2skill.video.video2action.pipeline:main"
+demo2skill-export = "demo2skill.export.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["demo2skill*"]

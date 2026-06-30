@@ -1,0 +1,53 @@
+workflow_id: create_github_issue_v1
+goal: Create a GitHub issue
+inputs:
+- name: title
+  type: string
+  required: true
+- name: body
+  type: string
+  required: true
+preconditions:
+- user_logged_in
+steps:
+- step_id: navigate_arghavan_b_workflow
+  action: navigate
+  url: https://github.com/arghavan-b/workflow-learning-agents/issues/new
+- step_id: fill_title
+  action: fill_field
+  target:
+    label: Add a title
+    role: textbox
+    selector: input#_r_22_
+    aria_label: Add a title
+    placeholder: Title
+  value: ${title}
+- step_id: fill_body
+  action: fill_field
+  target:
+    text: Video understandin
+    label: Markdown value
+    role: textbox
+    selector: textarea#_r_2d_
+    aria_label: Markdown value
+    placeholder: Type your description here…
+  value: ${body}
+- step_id: verify_form
+  action: verify
+  checks:
+  - field_equals:
+      label: Add a title
+      value: ${title}
+  - field_equals:
+      label: Markdown value
+      value: ${body}
+- step_id: confirm_before_submit
+  action: request_user_confirmation
+  reason: Submitting is irreversible; confirm the filled values before final submit.
+recovery:
+- condition: target_not_found
+  strategy: semantic_search_then_retry
+- condition: missing_input
+  strategy: ask_user
+- condition: verification_failed
+  strategy: stop_and_report

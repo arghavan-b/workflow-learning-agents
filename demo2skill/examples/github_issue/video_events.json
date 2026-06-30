@@ -1,0 +1,15 @@
+[
+  {"action": "navigate", "url": "https://github.com/owner/repo",
+   "page_title": "owner/repo", "start_ms": 0, "end_ms": 1200},
+  {"action": "click", "target_text": "Issues", "role": "link",
+   "x": 320, "y": 96, "page_title": "owner/repo", "start_ms": 1500, "end_ms": 2200},
+  {"action": "click", "target_text": "New issue", "role": "button",
+   "x": 1180, "y": 150, "page_title": "Issues · owner/repo", "start_ms": 2600, "end_ms": 3400},
+  {"action": "navigate", "url": "https://github.com/owner/repo/issues/new",
+   "page_title": "New Issue · owner/repo", "start_ms": 3500, "end_ms": 4200},
+  {"action": "type", "label": "Title", "role": "textbox",
+   "text": "Bug in login flow", "x": 640, "y": 240, "start_ms": 5000, "end_ms": 7000},
+  {"action": "type", "label": "Body", "role": "textbox",
+   "text": "Steps to reproduce:\n1. Open the login page\n2. Enter valid credentials\n3. Observe the redirect loop",
+   "x": 640, "y": 380, "start_ms": 7500, "end_ms": 12000}
+]

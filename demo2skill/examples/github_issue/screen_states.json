@@ -1,0 +1,55 @@
+{
+  "cursor": [
+    {"ms": 0,    "x": 200,  "y": 400, "clicking": false},
+    {"ms": 1500, "x": 330,  "y": 95,  "clicking": true},
+    {"ms": 2200, "x": 330,  "y": 95,  "clicking": false},
+    {"ms": 3500, "x": 1170, "y": 150, "clicking": true},
+    {"ms": 5000, "x": 650,  "y": 240, "clicking": false},
+    {"ms": 8000, "x": 650,  "y": 380, "clicking": false}
+  ],
+  "states": [
+    {
+      "index": 0, "ms": 0,
+      "url": "https://github.com/owner/repo", "title": "owner/repo",
+      "elements": [
+        {"id": "issues_tab", "role": "link", "text": "Issues", "bbox": [300, 80, 360, 110]},
+        {"id": "repo_readme", "role": "text", "text": "README", "bbox": [200, 300, 900, 800]}
+      ]
+    },
+    {
+      "index": 1, "ms": 2000,
+      "url": "https://github.com/owner/repo/issues", "title": "Issues · owner/repo",
+      "elements": [
+        {"id": "new_issue_btn", "role": "button", "text": "New issue", "bbox": [1100, 130, 1240, 170]},
+        {"id": "issue_list", "role": "text", "text": "No open issues", "bbox": [200, 300, 1240, 800]}
+      ]
+    },
+    {
+      "index": 2, "ms": 4000,
+      "url": "https://github.com/owner/repo/issues/new", "title": "New Issue · owner/repo",
+      "elements": [
+        {"id": "title", "role": "textbox", "label": "Title", "value": "", "bbox": [400, 220, 900, 260]},
+        {"id": "body", "role": "textbox", "label": "Body", "value": "", "bbox": [400, 320, 900, 460]},
+        {"id": "submit", "role": "button", "text": "Submit new issue", "bbox": [400, 500, 560, 540]}
+      ]
+    },
+    {
+      "index": 3, "ms": 7000,
+      "url": "https://github.com/owner/repo/issues/new", "title": "New Issue · owner/repo",
+      "elements": [
+        {"id": "title", "role": "textbox", "label": "Title", "value": "Bug in login flow", "focused": true, "bbox": [400, 220, 900, 260]},
+        {"id": "body", "role": "textbox", "label": "Body", "value": "", "bbox": [400, 320, 900, 460]},
+        {"id": "submit", "role": "button", "text": "Submit new issue", "bbox": [400, 500, 560, 540]}
+      ]
+    },
+    {
+      "index": 4, "ms": 11000,
+      "url": "https://github.com/owner/repo/issues/new", "title": "New Issue · owner/repo",
+      "elements": [
+        {"id": "title", "role": "textbox", "label": "Title", "value": "Bug in login flow", "bbox": [400, 220, 900, 260]},
+        {"id": "body", "role": "textbox", "label": "Body", "value": "Steps to reproduce:\n1. Open the login page\n2. Enter valid credentials\n3. Observe the redirect loop", "focused": true, "bbox": [400, 320, 900, 460]},
+        {"id": "submit", "role": "button", "text": "Submit new issue", "bbox": [400, 500, 560, 540]}
+      ]
+    }
+  ]
+}
