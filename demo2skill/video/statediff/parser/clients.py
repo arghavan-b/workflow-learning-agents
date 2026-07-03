@@ -30,15 +30,19 @@ from demo2skill.video.statediff.parser.vlm import ScreenParserClient
 class TransformersScreenVLMClient:
     """``ScreenParserClient`` backed by a HuggingFace image-text-to-text model.
 
-    Targets ScreenVLM's checkpoint or any Qwen2-VL-compatible vision LLM. The
-    model is loaded once in ``__init__``; each ``complete`` runs one generation
-    over a single frame and returns the raw decoded text (the dense-parse JSON
-    the prompt asks for).
+    This is the **generic JSON** path: a general instruct-VLM (Qwen2.5-VL,
+    InternVL, …) that you prompt to emit the dense-parse JSON. It is *not* the
+    real ScreenVLM checkpoint — that model emits ScreenTag markup, not JSON, and
+    has its own parser: use
+    :class:`demo2skill.video.statediff.parser.screenvlm.ScreenVLMParser`.
+
+    The model is loaded once in ``__init__``; each ``complete`` runs one
+    generation over a single frame and returns the raw decoded text.
     """
 
     def __init__(
         self,
-        model_id: str = "screenvlm/screenvlm-316m",
+        model_id: str = "Qwen/Qwen2.5-VL-3B-Instruct",
         *,
         device_map: str = "auto",
         max_new_tokens: int = 1024,

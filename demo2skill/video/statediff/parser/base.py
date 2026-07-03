@@ -17,10 +17,14 @@ shared dict->ScreenState constructors both paths use.
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 
 from demo2skill.video.statediff.cursor import CursorTrack
 from demo2skill.video.statediff.state import ScreenState, UIElement
+
+logger = logging.getLogger("demo2skill.parser")
 
 
 @runtime_checkable
@@ -73,6 +77,36 @@ def build_state(data: Dict[str, Any], *, index: Optional[int] = None,
     )
 
 
+def state_to_dict(state: ScreenState) -> Dict[str, Any]:
+    """Serialize a :class:`ScreenState` back to the parsed-screen dict shape.
+
+    Inverse of :func:`build_state` - the output round-trips through it, so parsed
+    states can be written to disk, inspected, and reloaded.
+    """
+
+    out: Dict[str, Any] = {"index": state.index, "ms": state.ms}
+    if state.url is not None:
+        out["url"] = state.url
+    if state.title is not None:
+        out["title"] = state.title
+    out["elements"] = [_element_to_dict(e) for e in state.elements]
+    return out
+
+
+def states_payload(states: List[ScreenState],
+                   cursor: Optional[CursorTrack] = None) -> Dict[str, Any]:
+    """The ``{cursor, states}`` fixture payload :func:`load_states` consumes."""
+
+    payload: Dict[str, Any] = {"states": [state_to_dict(s) for s in states]}
+    if cursor is not None and len(cursor):
+        payload["cursor"] = [
+            _drop_none({"ms": s.ms, "x": s.x, "y": s.y,
+                        "visible": s.visible, "clicking": s.clicking})
+            for s in cursor.samples
+        ]
+    return payload
+
+
 def load_states(data: Dict[str, Any]) -> Tuple[List[ScreenState], CursorTrack]:
     """Load the ``{cursor:[...], states:[...]}`` fixture shape into the objects
     statediff consumes. This is the deterministic, pixel-free path."""
@@ -91,9 +125,15 @@ def parse_frames(parser: ScreenParser, frames: Any) -> List[ScreenState]:
     """
 
     states: List[ScreenState] = []
-    for frame in frames.frames:
+    total = len(frames.frames)
+    for i, frame in enumerate(frames.frames, 1):
         image = frame.bytes() if hasattr(frame, "bytes") else None
-        states.append(parser.parse(image, index=frame.index, ms=frame.ms))
+        logger.info("parsing frame %d/%d (ms=%d)...", i, total, frame.ms)
+        t0 = time.perf_counter()
+        state = parser.parse(image, index=frame.index, ms=frame.ms)
+        logger.info("  frame %d/%d done in %.1fs -> %d elements",
+                    i, total, time.perf_counter() - t0, len(state.elements))
+        states.append(state)
     return states
 
 
@@ -125,3 +165,26 @@ def _bbox(value: Any) -> Tuple[int, int, int, int]:
     if not value or len(value) != 4:
         return (0, 0, 0, 0)
     return (int(value[0]), int(value[1]), int(value[2]), int(value[3]))
+
+
+def _element_to_dict(e: UIElement) -> Dict[str, Any]:
+    out: Dict[str, Any] = {"id": e.id, "role": e.role}
+    if e.text:
+        out["text"] = e.text
+    if e.bbox != (0, 0, 0, 0):
+        out["bbox"] = list(e.bbox)
+    if e.value is not None:
+        out["value"] = e.value
+    if e.label is not None:
+        out["label"] = e.label
+    if e.focused:
+        out["focused"] = True
+    if e.checked is not None:
+        out["checked"] = e.checked
+    if e.selected is not None:
+        out["selected"] = e.selected
+    return out
+
+
+def _drop_none(mapping: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: v for k, v in mapping.items() if v is not None}

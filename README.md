@@ -2,6 +2,10 @@
 
 Workflow Memory: Learning Reusable Procedures from Agent Trajectories
 
+For the big-picture map of how the pieces fit together — the demo→skill pipeline
+and the two loops (self-healing repair and the training bridge) — see
+[`docs/architecture.md`](docs/architecture.md).
+
 ## Demo2Skill v0
 
 This repo is starting with Module 1 from the Demo2Skill plan: browser-only
@@ -164,14 +168,72 @@ The implemented components (`demo2skill/video/statediff/`):
 - **`graph.py`** — `UIStateGraph`: deduped state nodes with action-labeled edges,
   turning one linear demo into a reusable app map.
 
-Given parsed screen states (what a screen parser such as OmniParser/ScreenParse
-emits — the pixels→state step is the pluggable front), the IDM recovers
+Given parsed screen states, the IDM recovers
 `click Issues → click New issue → type Title → type Body`, attributes the page
 transitions to the control under the cursor, and induces the same parameterized
 skill. See `tests/test_state_idm.py` and `examples/github_issue/screen_states.json`.
 
 A video-induced skill is a normal `WorkflowSkill`, so it runs under the executor
 + repair loop below just like a recorded one.
+
+#### The pixels→state front (`statediff/parser/`)
+
+The step that turns frames into `ScreenState`s is deliberately isolated so the
+IDM stays model-free and testable. That slot is now filled and still pluggable:
+
+- **`parser/base.py`** — the `ScreenParser` protocol, the `parse_frames` driver,
+  `build_state` / `load_states` / `state_to_dict`, and `ScriptedScreenParser`
+  (model-free replay of pre-parsed states).
+- **`parser/screenvlm.py`** — `ScreenVLMParser`, the **real
+  [`docling-project/ScreenVLM`](https://huggingface.co/docling-project/ScreenVLM)**
+  checkpoint (Idefics3, 316M; [arXiv:2602.14276](https://arxiv.org/abs/2602.14276)).
+  It emits **ScreenTag** markup (not JSON); `parse_screentag` converts it to
+  `UIElement`s, rescaling the `[0,500]` location tokens to pixels.
+- **`parser/vlm.py`** — `VLMScreenParser`, the *generic* path: a general
+  instruct-VLM prompted to emit dense-parse **JSON**, via a `ScreenParserClient`.
+- **`parser/clients.py`** — JSON-path backends behind lazy imports:
+  `TransformersScreenVLMClient` (a general HF VLM, `screenvlm` extra),
+  `AnthropicVisionClient` (Claude vision, reuses the `llm` extra), and
+  `default_screen_parser_client()` (env-driven).
+- **`parser/prompts.py`** — the dense-parse JSON prompt (every visible element,
+  not just the task-relevant one).
+
+Run the parser front over a recording with `demo2skill-parse-video`:
+
+```bash
+# 1. free dry run — no model, no ffmpeg: replay parsed states through the pipeline
+uv run demo2skill-parse-video \
+  --replay demo2skill/examples/github_issue/screen_states.json \
+  -o runs/parse/states.json --trace-out runs/parse/trace.json --graph
+
+# 2. a real recording with the ScreenVLM checkpoint (downloads ~316M weights;
+#    runs on CPU, faster on GPU)
+uv sync --extra screenvlm
+uv run demo2skill-parse-video demo.mp4 \
+  --client screenvlm --sample fps --fps 1 --max-frames 40 \
+  -o runs/parse/states.json --trace-out runs/parse/trace.json --graph
+# pin the training-data version with --revision v1 or --revision v2
+
+# 3. or a general instruct-VLM via Claude vision (one vision call per frame)
+uv sync --extra llm
+ANTHROPIC_API_KEY=... uv run demo2skill-parse-video demo.mp4 \
+  --client anthropic --sample fps --fps 1 --max-frames 40 \
+  -o runs/parse/states.json --trace-out runs/parse/trace.json
+```
+
+Frame extraction (`video2action/frames.py`, via ffmpeg — any container: mp4,
+mov, mkv, webm, …) offers three sampling strategies, chosen with `--sample`:
+`fps` (uniform at `--fps` N/s), `keyframes` (encoded I-frames only — cheap, good
+for slide-like tutorials), and `scene` (scene-change boundaries above
+`--scene-threshold` — adaptive, good for busy UIs). Per-frame timestamps and
+resolution are read from ffmpeg/ffprobe, not assumed. Pre-extracted frames can be
+passed with `--frames-dir` to skip ffmpeg entirely.
+
+This writes the parsed `states.json` (inspect it first — parser quality gates
+everything downstream) and, with `--trace-out`, a normalize-ready `trace.json`
+that flows straight into induction. Cursor evidence is not yet recovered from
+pixels, so pass `--cursor cursor.json` if you have pointer data; otherwise the
+IDM leans on field-value and URL changes.
 
 ## Execute a skill and self-heal (Modules 6–9)
 
@@ -205,6 +267,29 @@ to the page's current labels, and the run still reaches the confirmation gate.
 The repaired (more robust) skill is what a `WorkflowStore` would persist for next
 time. Irreversible submits stay gated: the run halts at
 `request_user_confirmation` unless `--yes` is passed.
+
+## Export verified trajectories for training (the bridge)
+
+The same run that drives repair is also a source of *verified* supervision. The
+executor + verifier confirm which action actually worked on which element —
+something raw video-mining pipelines lack — so `demo2skill/export/` turns a run
+into a training-ready `trajectory.jsonl` in the `(observation, instruction,
+action)` shape a policy model consumes, keeping **only** the steps the run
+confirmed.
+
+```bash
+uv run demo2skill-export demo2skill/examples/github_issue/induced_workflow.yaml \
+  --page demo2skill/examples/github_issue/page_match.html \
+  --inputs demo2skill/examples/github_issue/test_inputs.json \
+  -o runs/github_issue_demo/trajectory.jsonl
+```
+
+Each JSONL line is one confirmed step: `${title}` is bound to the concrete typed
+string, the exported target is the *repaired* (not the brittle demo) locator, and
+`verified` / provenance record how it was grounded. Halting at the confirmation
+gate counts as a good episode, so no irreversible action is taken to produce
+data. This is the seam that lets an editable, verified skill double as filtered
+supervision — see [`docs/architecture.md`](docs/architecture.md).
 
 ### Run the tests
 

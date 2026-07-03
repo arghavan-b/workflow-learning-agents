@@ -17,7 +17,15 @@ dependencies = [
 
 [project.optional-dependencies]
 llm = ["anthropic>=0.40"]
-screenvlm = ["transformers>=4.45", "torch>=2.2", "pillow>=10.0"]
+# ScreenVLM is an Idefics3 checkpoint saved with transformers 4.55.2. Pin to the
+# 4.55 line — newer dev builds have renamed/removed Idefics3ImageProcessor and
+# fail to load the processor. Run this extra on Python 3.11/3.12 (see
+# .python-version); Python 3.14 has no stable torch/transformers wheels yet.
+screenvlm = ["transformers>=4.55,<4.56", "torch>=2.2", "pillow>=10.0", "accelerate>=0.34"]
+# OCR value-fill for ScreenVLM. 'ocr' uses Tesseract (needs the system
+# 'tesseract' binary); 'ocr-easy' is pip-only (no binary), reusing torch.
+ocr = ["pytesseract>=0.3.10", "pillow>=10.0"]
+ocr-easy = ["easyocr>=1.7", "pillow>=10.0"]
 
 [project.scripts]
 demo2skill-record = "demo2skill.recorder.playwright_recorder:main"
@@ -25,6 +33,7 @@ demo2skill-normalize = "demo2skill.trace.normalize:main"
 demo2skill-induce = "demo2skill.induction.workflow_generator:main"
 demo2skill-run = "demo2skill.executor.cli:main"
 demo2skill-video2action = "demo2skill.video.video2action.pipeline:main"
+demo2skill-parse-video = "demo2skill.video.statediff.cli:main"
 demo2skill-export = "demo2skill.export.cli:main"
 
 [tool.setuptools.packages.find]

@@ -19,11 +19,15 @@ from demo2skill.video.statediff.graph import UIStateGraph
 from demo2skill.video.statediff.parser import (
     ScreenParser,
     ScreenParserClient,
+    ScreenVLMParser,
     ScriptedScreenParser,
     VLMScreenParser,
     build_state,
     load_states,
     parse_frames,
+    parse_screentag,
+    state_to_dict,
+    states_payload,
 )
 
 __all__ = [
@@ -40,9 +44,13 @@ __all__ = [
     # pixels->ScreenState front (pluggable)
     "ScreenParser",
     "ScreenParserClient",
+    "ScreenVLMParser",
     "ScriptedScreenParser",
     "VLMScreenParser",
+    "parse_screentag",
     "build_state",
     "load_states",
     "parse_frames",
+    "state_to_dict",
+    "states_payload",
 ]

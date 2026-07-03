@@ -1,19 +1,33 @@
 """Frame access for the inverse-dynamics module.
 
-A :class:`Frames` is the observation stream the detector/recognizer read. It can
-be built from a directory of pre-extracted frames or decoded from a video with
-ffmpeg (best-effort; absence of ffmpeg is not fatal - the scripted backend needs
-no pixels). Windowing helpers let the recognizer look only at the frames around
-a detected action interval.
+A :class:`Frames` is the observation stream the detector / recognizer / screen
+parser read. It can be built from a directory of pre-extracted frames or decoded
+from a video with ffmpeg. Decoding supports three sampling strategies so you can
+trade coverage against model cost:
+
+* ``fps``       - uniform sampling at N frames/second (default);
+* ``keyframes`` - only encoded I-frames (cheap; great for slide-like tutorials);
+* ``scene``     - frames at scene-change boundaries above a threshold (adaptive;
+                  good for busy UIs with animation/video content).
+
+ffmpeg reads essentially any container (mp4, mov, mkv, webm, avi, ...), so format
+is a non-issue. Real per-frame timestamps are recovered from the filter's
+``metadata=print`` output rather than faked, and resolution / fps are probed with
+ffprobe when available. Absence of ffmpeg is not fatal for the scripted / replay
+paths - only ``from_video`` needs it.
 """
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
+
+_PTS_RE = re.compile(r"pts_time:([0-9]+(?:\.[0-9]+)?)")
+SAMPLE_MODES = ("fps", "keyframes", "scene")
 
 
 @dataclass
@@ -52,16 +66,39 @@ class Frames:
     # -- constructors --------------------------------------------------------
 
     @classmethod
-    def from_dir(cls, directory, fps: float = 1.0) -> "Frames":
+    def from_dir(cls, directory, fps: float = 1.0,
+                 width: Optional[int] = None, height: Optional[int] = None) -> "Frames":
         directory = Path(directory)
-        paths = sorted(p for p in directory.glob("*.png")) or sorted(directory.glob("*.jpg"))
+        exts = ("*.png", "*.jpg", "*.jpeg", "*.webp")
+        paths: List[Path] = []
+        for ext in exts:
+            paths.extend(directory.glob(ext))
+        paths = sorted(paths)
         step_ms = int(1000 / fps) if fps else 1000
         frames = [Frame(index=i, ms=i * step_ms, path=p) for i, p in enumerate(paths)]
-        return cls(frames, fps=fps)
+        return cls(frames, fps=fps, width=width, height=height)
 
     @classmethod
-    def from_video(cls, video_path, fps: float = 2.0, out_dir=None) -> "Frames":
-        """Decode ``video_path`` to frames at ``fps`` using ffmpeg if available."""
+    def from_video(
+        cls,
+        video_path,
+        fps: float = 2.0,
+        out_dir=None,
+        *,
+        sample: str = "fps",
+        scene_threshold: float = 0.3,
+        max_frames: Optional[int] = None,
+    ) -> "Frames":
+        """Decode ``video_path`` to frames with ffmpeg.
+
+        ``sample`` selects the strategy (``fps`` | ``keyframes`` | ``scene``).
+        ``fps`` is used only for uniform sampling; ``scene_threshold`` (0..1) sets
+        the scene-cut sensitivity for ``sample='scene'``. Per-frame timestamps are
+        read back from ffmpeg rather than assumed.
+        """
+
+        if sample not in SAMPLE_MODES:
+            raise ValueError(f"sample must be one of {SAMPLE_MODES}, got {sample!r}")
 
         video_path = Path(video_path)
         out_dir = Path(out_dir) if out_dir else video_path.with_suffix("") / "frames"
@@ -69,17 +106,111 @@ class Frames:
         if shutil.which("ffmpeg") is None:
             raise RuntimeError(
                 "ffmpeg not found; pre-extract frames and use Frames.from_dir, "
-                "or use the scripted backend which needs no pixels."
+                "or use the scripted backend / --replay which need no pixels."
             )
-        subprocess.run(
-            ["ffmpeg", "-i", str(video_path), "-vf", f"fps={fps}",
-             str(out_dir / "frame_%06d.png")],
-            check=True, capture_output=True,
-        )
-        return cls.from_dir(out_dir, fps=fps)
+
+        width, height, probed_fps, _duration = probe_video(video_path)
+        times_file = out_dir / "frame_times.txt"
+        vf = _filter_for(sample, fps=fps, scene_threshold=scene_threshold, times_file=times_file)
+
+        cmd = ["ffmpeg", "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
+               "-i", str(video_path), "-vf", vf, "-vsync", "vfr"]
+        if max_frames:
+            cmd += ["-frames:v", str(int(max_frames))]
+        cmd += [str(out_dir / "frame_%06d.png")]
+        subprocess.run(cmd, check=True, capture_output=True)
+
+        paths = sorted(out_dir.glob("frame_*.png"))
+        times_ms = _read_pts_ms(times_file)
+        step_ms = int(1000 / fps) if fps else 1000
+        frames: List[Frame] = []
+        for i, p in enumerate(paths):
+            ms = times_ms[i] if i < len(times_ms) else i * step_ms
+            frames.append(Frame(index=i, ms=ms, path=p))
+        return cls(frames, fps=(probed_fps or fps), width=width, height=height)
 
     @classmethod
     def empty(cls) -> "Frames":
         """A pixel-free stream (the scripted backend only needs timestamps)."""
 
         return cls([], fps=1.0)
+
+
+# -- ffmpeg / ffprobe helpers (pure parsing split out for testability) --------
+
+def _filter_for(sample: str, *, fps: float, scene_threshold: float, times_file: Path) -> str:
+    if sample == "keyframes":
+        select = "select='eq(pict_type\\,I)'"
+    elif sample == "scene":
+        select = f"select='gt(scene\\,{scene_threshold})'"
+    else:  # uniform fps
+        select = f"fps={fps}"
+    # metadata=print emits one block per output frame (in order) carrying pts_time.
+    return f"{select},metadata=print:file={times_file}"
+
+
+def _read_pts_ms(times_file: Path) -> List[int]:
+    if not times_file.exists():
+        return []
+    return _parse_pts_ms(times_file.read_text(encoding="utf-8", errors="ignore"))
+
+
+def _parse_pts_ms(text: str) -> List[int]:
+    """Extract per-frame timestamps (ms) from ffmpeg ``metadata=print`` output."""
+
+    return [int(round(float(m) * 1000)) for m in _PTS_RE.findall(text)]
+
+
+def probe_video(video_path) -> Tuple[Optional[int], Optional[int], Optional[float], Optional[float]]:
+    """Return ``(width, height, fps, duration_s)`` via ffprobe, best-effort."""
+
+    if shutil.which("ffprobe") is None:
+        return (None, None, None, None)
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height,r_frame_rate:format=duration",
+             "-of", "default=noprint_wrappers=1", str(video_path)],
+            check=True, capture_output=True, text=True,
+        ).stdout
+    except (subprocess.CalledProcessError, OSError):
+        return (None, None, None, None)
+    return _parse_probe(out)
+
+
+def _parse_probe(text: str):
+    fields = {}
+    for line in text.splitlines():
+        if "=" in line:
+            k, _, v = line.partition("=")
+            fields[k.strip()] = v.strip()
+
+    def _int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    def _rate(v):
+        if not v or v in ("0/0", "N/A"):
+            return None
+        if "/" in v:
+            num, _, den = v.partition("/")
+            try:
+                d = float(den)
+                return float(num) / d if d else None
+            except ValueError:
+                return None
+        try:
+            return float(v)
+        except ValueError:
+            return None
+
+    width = _int(fields.get("width"))
+    height = _int(fields.get("height"))
+    fps = _rate(fields.get("r_frame_rate"))
+    try:
+        duration = float(fields.get("duration")) if fields.get("duration") not in (None, "N/A") else None
+    except ValueError:
+        duration = None
+    return (width, height, fps, duration)
