@@ -19,12 +19,15 @@ paths - only ``from_video`` needs it.
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
+
+logger = logging.getLogger("demo2skill.parser")
 
 _PTS_RE = re.compile(r"pts_time:([0-9]+(?:\.[0-9]+)?)")
 SAMPLE_MODES = ("fps", "keyframes", "scene")
@@ -103,25 +106,40 @@ class Frames:
         video_path = Path(video_path)
         out_dir = Path(out_dir) if out_dir else video_path.with_suffix("") / "frames"
         out_dir.mkdir(parents=True, exist_ok=True)
-        if shutil.which("ffmpeg") is None:
+        exe = _ffmpeg_exe()
+        if exe is None:
             raise RuntimeError(
-                "ffmpeg not found; pre-extract frames and use Frames.from_dir, "
-                "or use the scripted backend / --replay which need no pixels."
+                "ffmpeg not found. Install it one of these ways:\n"
+                "  pip-only (no brew):  uv pip install imageio-ffmpeg\n"
+                "  system:              brew install ffmpeg   (macOS)\n"
+                "Or pre-extract frames yourself and use Frames.from_dir / --frames-dir."
             )
 
         width, height, probed_fps, _duration = probe_video(video_path)
         times_file = out_dir / "frame_times.txt"
-        vf = _filter_for(sample, fps=fps, scene_threshold=scene_threshold, times_file=times_file)
+        out_pattern = out_dir / "frame_%06d.png"
+        select = _select_filter(sample, fps=fps, scene_threshold=scene_threshold)
 
-        cmd = ["ffmpeg", "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
-               "-i", str(video_path), "-vf", vf, "-vsync", "vfr"]
-        if max_frames:
-            cmd += ["-frames:v", str(int(max_frames))]
-        cmd += [str(out_dir / "frame_%06d.png")]
-        subprocess.run(cmd, check=True, capture_output=True)
+        # First try with per-frame timestamp printing; if that fails (some ffmpeg
+        # builds/paths reject the metadata filter), retry the plain filter and
+        # fall back to synthetic timestamps rather than erroring out.
+        vf_meta = f"{select},metadata=print:file={times_file}"
+        proc = _run_ffmpeg(exe, video_path, vf_meta, out_pattern, max_frames)
+        used_meta = proc.returncode == 0
+        if not used_meta:
+            logger.warning("ffmpeg timing pass failed (exit %s); retrying without "
+                           "metadata (synthetic timestamps)", proc.returncode)
+            for p in out_dir.glob("frame_*.png"):
+                p.unlink()
+            proc = _run_ffmpeg(exe, video_path, select, out_pattern, max_frames)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"ffmpeg failed to decode {video_path} (exit {proc.returncode}).\n"
+                + ((proc.stderr or "").strip()[-1000:] or "(no stderr)")
+            )
 
         paths = sorted(out_dir.glob("frame_*.png"))
-        times_ms = _read_pts_ms(times_file)
+        times_ms = _read_pts_ms(times_file) if used_meta else []
         step_ms = int(1000 / fps) if fps else 1000
         frames: List[Frame] = []
         for i, p in enumerate(paths):
@@ -138,15 +156,41 @@ class Frames:
 
 # -- ffmpeg / ffprobe helpers (pure parsing split out for testability) --------
 
-def _filter_for(sample: str, *, fps: float, scene_threshold: float, times_file: Path) -> str:
+def _ffmpeg_exe() -> Optional[str]:
+    """Resolve an ffmpeg binary: PATH first, then the pip-installable
+    ``imageio-ffmpeg`` bundle (no system install / brew needed)."""
+
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+
+def _select_filter(sample: str, *, fps: float, scene_threshold: float) -> str:
     if sample == "keyframes":
-        select = "select='eq(pict_type\\,I)'"
-    elif sample == "scene":
-        select = f"select='gt(scene\\,{scene_threshold})'"
-    else:  # uniform fps
-        select = f"fps={fps}"
+        return "select='eq(pict_type\\,I)'"
+    if sample == "scene":
+        return f"select='gt(scene\\,{scene_threshold})'"
+    return f"fps={fps}"  # uniform
+
+
+def _filter_for(sample: str, *, fps: float, scene_threshold: float, times_file: Path) -> str:
     # metadata=print emits one block per output frame (in order) carrying pts_time.
-    return f"{select},metadata=print:file={times_file}"
+    return (f"{_select_filter(sample, fps=fps, scene_threshold=scene_threshold)}"
+            f",metadata=print:file={times_file}")
+
+
+def _run_ffmpeg(exe: str, video_path, vf: str, out_pattern, max_frames):
+    cmd = [exe, "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
+           "-i", str(video_path), "-vf", vf, "-vsync", "vfr"]
+    if max_frames:
+        cmd += ["-frames:v", str(int(max_frames))]
+    cmd += [str(out_pattern)]
+    return subprocess.run(cmd, capture_output=True, text=True)
 
 
 def _read_pts_ms(times_file: Path) -> List[int]:

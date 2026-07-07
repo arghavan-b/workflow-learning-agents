@@ -52,6 +52,7 @@ def build_element(data: Dict[str, Any], fallback_index: int = 0) -> UIElement:
         focused=bool(data.get("focused", False)),
         checked=data.get("checked"),
         selected=data.get("selected"),
+        placeholder_text=data.get("placeholder_text"),
     )
 
 
@@ -116,18 +117,34 @@ def load_states(data: Dict[str, Any]) -> Tuple[List[ScreenState], CursorTrack]:
     return states, CursorTrack.from_records(data.get("cursor"))
 
 
-def parse_frames(parser: ScreenParser, frames: Any) -> List[ScreenState]:
+def invert_image(data: bytes) -> bytes:
+    """Invert an image's colors (dark UI -> light). Web-trained parsers/OCR see
+    dark-mode screenshots as out-of-distribution; inverting fakes a light theme."""
+
+    import io
+    from PIL import Image, ImageOps
+    img = Image.open(io.BytesIO(data)).convert("RGB")
+    buf = io.BytesIO()
+    ImageOps.invert(img).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def parse_frames(parser: ScreenParser, frames: Any, *, invert: bool = False) -> List[ScreenState]:
     """Run ``parser`` over a :class:`~demo2skill.video.video2action.frames.Frames`
     stream, yielding one :class:`ScreenState` per frame in temporal order.
 
-    The proposer downstream collapses consecutive identical states, so the parser
-    need not deduplicate - it just parses every frame it is given.
+    With ``invert=True`` each frame is color-inverted before parsing (dark->light),
+    which helps light-trained parsers and OCR on dark-mode UIs. Cursor detection
+    is unaffected (it runs on the original frames). The proposer downstream
+    collapses consecutive identical states, so the parser need not deduplicate.
     """
 
     states: List[ScreenState] = []
     total = len(frames.frames)
     for i, frame in enumerate(frames.frames, 1):
         image = frame.bytes() if hasattr(frame, "bytes") else None
+        if invert and image is not None:
+            image = invert_image(image)
         logger.info("parsing frame %d/%d (ms=%d)...", i, total, frame.ms)
         t0 = time.perf_counter()
         state = parser.parse(image, index=frame.index, ms=frame.ms)
@@ -183,6 +200,8 @@ def _element_to_dict(e: UIElement) -> Dict[str, Any]:
         out["checked"] = e.checked
     if e.selected is not None:
         out["selected"] = e.selected
+    if getattr(e, "placeholder_text", None):
+        out["placeholder_text"] = e.placeholder_text
     return out
 
 

@@ -56,6 +56,13 @@ class MissingDependencyTest(unittest.TestCase):
             clients.AnthropicVisionClient()
         self.assertIn("llm", str(ctx.exception))
 
+    def test_openai_vision_client_raises_helpful_message_when_absent(self):
+        if _installed("openai"):
+            self.skipTest("openai installed; absence path not exercised here")
+        with self.assertRaises(SystemExit) as ctx:
+            clients.OpenAIVisionClient()
+        self.assertIn("openai", str(ctx.exception))
+
 
 class FakeScreenVLM:
     """A hand-rolled client to confirm the protocol shape is satisfiable."""

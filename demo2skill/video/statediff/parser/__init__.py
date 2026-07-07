@@ -20,6 +20,7 @@ from demo2skill.video.statediff.parser.base import (
 from demo2skill.video.statediff.parser.vlm import ScreenParserClient, VLMScreenParser
 from demo2skill.video.statediff.parser.clients import (
     AnthropicVisionClient,
+    OpenAIVisionClient,
     TransformersScreenVLMClient,
     default_screen_parser_client,
 )
@@ -30,6 +31,7 @@ from demo2skill.video.statediff.parser.screenvlm import (
 from demo2skill.video.statediff.parser.ocr import (
     OCR,
     EasyOCRBackend,
+    PaddleOCRBackend,
     TesseractOCR,
     make_ocr,
     ocr_fill_values,
@@ -49,6 +51,7 @@ __all__ = [
     # concrete model backends (lazy deps)
     "TransformersScreenVLMClient",
     "AnthropicVisionClient",
+    "OpenAIVisionClient",
     "default_screen_parser_client",
     # the real ScreenVLM checkpoint (ScreenTag → ScreenState)
     "ScreenVLMParser",
@@ -57,6 +60,7 @@ __all__ = [
     "OCR",
     "TesseractOCR",
     "EasyOCRBackend",
+    "PaddleOCRBackend",
     "make_ocr",
     "ocr_fill_values",
 ]

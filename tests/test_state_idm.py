@@ -120,3 +120,47 @@ class ToggleTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NearSnapTest(unittest.TestCase):
+    def test_near_snaps_to_nearest_within_radius(self):
+        from demo2skill.video.statediff import ScreenState, UIElement
+        s = ScreenState(0, 0, elements=[
+            UIElement(id="btn", role="button", text="New issue", bbox=(100, 100, 200, 130)),
+        ])
+        self.assertIsNone(s.at(210, 115))                 # just outside the box
+        self.assertEqual(s.near(210, 115, radius=40).id, "btn")   # snaps to it
+        self.assertIsNone(s.near(400, 400, radius=40))    # nothing within radius
+
+
+class ClickAbstainTest(unittest.TestCase):
+    """The generic-click rule must abstain when the cursor settled far from any
+    change, and fire only when it settled inside the changed region."""
+
+    def _states(self):
+        from demo2skill.video.statediff import ScreenState, UIElement
+        before = ScreenState(0, 0, elements=[
+            UIElement(id="bg", role="text", text="content", bbox=(0, 0, 100, 100)),
+        ])
+        after = ScreenState(1, 400, elements=[
+            UIElement(id="bg", role="text", text="content", bbox=(0, 0, 100, 100)),
+            UIElement(id="popup", role="button", text="OK", bbox=(500, 500, 560, 530)),
+        ])
+        return before, after
+
+    def test_click_far_from_change_abstains(self):
+        from demo2skill.video.statediff import StateDiffIDM
+        from demo2skill.video.statediff.cursor import CursorSample, CursorTrack
+        before, after = self._states()
+        cur = CursorTrack([CursorSample(0, 10, 10), CursorSample(400, 10, 10, clicking=True)])
+        self.assertEqual(StateDiffIDM(cur).infer(before, after).action_type, "noop")
+
+    def test_click_inside_change_is_recovered(self):
+        from demo2skill.video.statediff import StateDiffIDM
+        from demo2skill.video.statediff.cursor import CursorSample, CursorTrack
+        before, after = self._states()
+        cur = CursorTrack([CursorSample(0, 400, 400),
+                           CursorSample(400, 530, 515, clicking=True)])
+        action = StateDiffIDM(cur).infer(before, after)
+        self.assertEqual(action.action_type, "click")
+        self.assertEqual(action.target.id, "popup")

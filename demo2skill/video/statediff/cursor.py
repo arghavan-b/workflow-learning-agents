@@ -75,11 +75,13 @@ class CursorTrack:
             return True
         return self.dwell_point(start_ms, end_ms) is not None
 
-    def element_under(self, state, start_ms: int, end_ms: int) -> Optional[UIElement]:
+    def element_under(self, state, start_ms: int, end_ms: int,
+                      radius: float = 40.0) -> Optional[UIElement]:
         point = self.dwell_point(start_ms, end_ms)
         if point is None:
             return None
-        return state.at(*point)
+        # Prefer a containing element; otherwise snap to the nearest within radius.
+        return state.at(*point) or state.near(*point, radius=radius)
 
     @classmethod
     def from_records(cls, records) -> "CursorTrack":

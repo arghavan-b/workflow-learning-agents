@@ -51,6 +51,47 @@ class StubScreenVLM:
         return json.dumps(data)
 
 
+class VLMRobustnessTest(unittest.TestCase):
+    def test_parse_json_strips_fences_and_prose(self):
+        from demo2skill.video.statediff.parser.vlm import _parse_json
+        wrapped = 'Here is the parse:\n```json\n{"elements": [{"role": "button"}]}\n```\nDone.'
+        self.assertEqual(_parse_json(wrapped), {"elements": [{"role": "button"}]})
+
+    def test_bad_response_yields_empty_state_not_crash(self):
+        from demo2skill.video.statediff.parser.vlm import VLMScreenParser
+
+        class BadClient:
+            def complete(self, *, system, prompt, images):
+                return '{"elements": [ {"role": "button"  <<truncated'   # invalid JSON
+
+        state = VLMScreenParser(BadClient()).parse(b"x", index=5, ms=500)
+        self.assertEqual(state.index, 5)
+        self.assertEqual(state.elements, [])        # empty, but no exception
+
+    def test_bare_array_response_is_wrapped(self):
+        from demo2skill.video.statediff.parser.vlm import VLMScreenParser
+
+        class ArrayClient:
+            def complete(self, *, system, prompt, images):
+                return '[{"role": "textbox", "text": "hi", "bbox": [0,0,10,10]}]'
+
+        state = VLMScreenParser(ArrayClient()).parse(b"x", index=0, ms=0)
+        self.assertEqual(len(state.elements), 1)
+        self.assertEqual(state.elements[0].role, "textbox")
+
+
+class InvertImageTest(unittest.TestCase):
+    def test_invert_flips_colors(self):
+        import io
+        from PIL import Image
+        from demo2skill.video.statediff.parser.base import invert_image
+        buf = io.BytesIO()
+        Image.new("RGB", (4, 4), (10, 20, 30)).save(buf, format="PNG")
+        out = invert_image(buf.getvalue())
+        px = Image.open(io.BytesIO(out)).convert("RGB").getpixel((0, 0))
+        self.assertEqual(px, (245, 235, 225))   # 255 - original
+
+
 class BuildStateTest(unittest.TestCase):
     def test_build_state_is_tolerant(self):
         state = build_state(

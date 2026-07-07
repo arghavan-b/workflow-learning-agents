@@ -8,6 +8,13 @@ evidence determine the action. Outputs the shared
 
 from demo2skill.video.statediff.state import ScreenState, UIElement
 from demo2skill.video.statediff.cursor import CursorSample, CursorTrack
+from demo2skill.video.statediff.cursor_detect import (
+    CursorDetector,
+    CursorHit,
+    TemplateCursorDetector,
+    build_cursor_detector,
+    detect_cursor_track,
+)
 from demo2skill.video.statediff.matching import match_states
 from demo2skill.video.statediff.inverse_dynamics import (
     InferredAction,
@@ -16,6 +23,11 @@ from demo2skill.video.statediff.inverse_dynamics import (
     TransitionProposer,
 )
 from demo2skill.video.statediff.graph import UIStateGraph
+from demo2skill.video.statediff.field_text import (
+    classify_field_text,
+    chain_editables,
+    vote_value,
+)
 from demo2skill.video.statediff.parser import (
     ScreenParser,
     ScreenParserClient,
@@ -35,7 +47,15 @@ __all__ = [
     "UIElement",
     "CursorSample",
     "CursorTrack",
+    "CursorDetector",
+    "CursorHit",
+    "TemplateCursorDetector",
+    "build_cursor_detector",
+    "detect_cursor_track",
     "match_states",
+    "classify_field_text",
+    "chain_editables",
+    "vote_value",
     "InferredAction",
     "StateDiffIDM",
     "StateTrajectoryBuilder",

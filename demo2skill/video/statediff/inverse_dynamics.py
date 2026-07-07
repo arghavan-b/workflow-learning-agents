@@ -29,11 +29,40 @@ SCROLL_DY = 20    # px coherent vertical shift => scroll
 
 
 def _value(e) -> str:
-    """An element's current content: its field value if set, else its text."""
+    """An element's current content: its field value if set, else its text.
+
+    Placeholder-aware: if the element's text *is* its placeholder, it is not
+    content, so don't let it leak in as a value (Bug 1)."""
 
     if e.value not in (None, ""):
         return e.value
+    ph = getattr(e, "placeholder_text", None)
+    if ph and (e.text or "") == ph:
+        return ""
     return e.text or ""
+
+
+def _changed_boxes(match, before, after) -> list:
+    """Bounding boxes of elements that appeared, disappeared, or changed state."""
+
+    boxes = [e.bbox for e in match.appeared] + [e.bbox for e in match.disappeared]
+    for b, a in match.pairs:
+        # Content/state changes only. Role flips (Issues tab<->button parser
+        # noise) are NOT treated as a change (Bug 3).
+        if (_value(a) != _value(b) or a.checked != b.checked
+                or a.selected != b.selected):
+            boxes.append(a.bbox)
+    return boxes
+
+
+def _near_changed(point, match, before, after, pad: int = 25) -> bool:
+    """Is ``point`` inside (or within ``pad`` of) any element that changed?"""
+
+    px, py = point
+    for x1, y1, x2, y2 in _changed_boxes(match, before, after):
+        if (x1 - pad) <= px <= (x2 + pad) and (y1 - pad) <= py <= (y2 + pad):
+            return True
+    return False
 
 
 @dataclass
@@ -155,7 +184,7 @@ class StateDiffIDM:
         opened = [e for e in match.appeared if e.role in {"menu", "dialog", "listbox", "option"}]
         if opened:
             control = self.cursor.element_under(before, before.ms, after.ms)
-            act = "click" if clicked else "click"  # hover handled below if no signature
+            act = "click"
             if control is not None:
                 x, y = control.center
                 return InferredAction(
@@ -179,9 +208,12 @@ class StateDiffIDM:
                                   effect={"focused": focus_after.display()},
                                   x=x, y=y, confidence=0.6, **common)
 
-        # 8. Generic click: cursor settled over a control with a local change.
-        if clicked and cursor_pt is not None:
-            control = before.at(*cursor_pt)
+        # 8. Generic click: only when the cursor settled *inside a region that
+        #    actually changed*. Otherwise abstain — a settled cursor over an
+        #    unchanged area is not evidence of a click (abstain over guess).
+        if clicked and cursor_pt is not None and _near_changed(cursor_pt, match, before, after):
+            control = (after.at(*cursor_pt) or before.at(*cursor_pt)
+                       or after.near(*cursor_pt) or before.near(*cursor_pt))
             if control is not None:
                 x, y = control.center
                 return InferredAction("click", target=control,

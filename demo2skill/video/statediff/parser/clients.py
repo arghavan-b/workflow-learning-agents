@@ -98,7 +98,7 @@ class AnthropicVisionClient:
         model: str = "claude-opus-4-8",
         *,
         api_key: Optional[str] = None,
-        max_tokens: int = 2048,
+        max_tokens: int = 4096,
         media_type: str = "image/png",
     ) -> None:
         try:
@@ -135,6 +135,56 @@ class AnthropicVisionClient:
         return "".join(block.text for block in message.content if block.type == "text")
 
 
+class OpenAIVisionClient:
+    """``ScreenParserClient`` backed by an OpenAI vision model (GPT-4o etc.).
+
+    Install with the ``openai`` extra (``uv sync --extra openai``) and set
+    ``OPENAI_API_KEY``. The model defaults to ``gpt-4o`` but is overridable via
+    the ``OPENAI_MODEL`` env var or the ``model`` argument (``--model`` on the
+    CLI), so you can point it at whatever vision model you have access to.
+    """
+
+    def __init__(
+        self,
+        model: str = "gpt-4o",
+        *,
+        api_key: Optional[str] = None,
+        max_tokens: int = 4096,
+        media_type: str = "image/png",
+    ) -> None:
+        try:
+            import openai
+        except ImportError as exc:  # pragma: no cover - exercised only with extra
+            raise SystemExit(
+                "The 'openai' package is required for the OpenAIVisionClient.\n"
+                "Install it with:  uv sync --extra openai"
+            ) from exc
+        self._client = openai.OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY"))
+        self.model = os.environ.get("OPENAI_MODEL", model)
+        self.max_tokens = max_tokens
+        self.media_type = media_type
+
+    def complete(self, *, system: str, prompt: str, images: List[bytes]) -> str:
+        content: list = [{"type": "text", "text": prompt}]
+        for b in images:
+            data = base64.b64encode(b).decode("ascii")
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{self.media_type};base64,{data}"},
+            })
+        messages = [{"role": "system", "content": system},
+                    {"role": "user", "content": content}]
+        try:
+            resp = self._client.chat.completions.create(
+                model=self.model, messages=messages, max_tokens=self.max_tokens)
+        except Exception:
+            # Newer reasoning models reject `max_tokens`; retry with the new name.
+            resp = self._client.chat.completions.create(
+                model=self.model, messages=messages,
+                max_completion_tokens=self.max_tokens)
+        return resp.choices[0].message.content or ""
+
+
 def default_screen_parser_client() -> Optional[ScreenParserClient]:
     """Pick a client from the environment, or ``None`` (no model configured).
 
@@ -148,6 +198,11 @@ def default_screen_parser_client() -> Optional[ScreenParserClient]:
     if model_id:
         try:
             return TransformersScreenVLMClient(model_id)
+        except SystemExit:
+            return None
+    if os.environ.get("OPENAI_API_KEY"):
+        try:
+            return OpenAIVisionClient()
         except SystemExit:
             return None
     if os.environ.get("ANTHROPIC_API_KEY"):

@@ -54,9 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--frames-dir", help="Directory of pre-extracted frames (skips ffmpeg).")
     p.add_argument("--replay", help="A screen_states.json to replay (no model, no cost).")
     p.add_argument("--client", default="auto",
-                   choices=["auto", "screenvlm", "anthropic", "transformers", "scripted"],
+                   choices=["auto", "screenvlm", "anthropic", "openai", "transformers", "scripted"],
                    help="Which parser backend to use. 'screenvlm' = the real "
-                        "docling-project/ScreenVLM checkpoint (ScreenTag).")
+                        "docling-project/ScreenVLM checkpoint (ScreenTag); "
+                        "'anthropic'/'openai' = a general vision model (JSON).")
     p.add_argument("--model", help="Model id: docling-project/ScreenVLM for --client "
                                    "screenvlm, or an HF VLM for --client transformers.")
     p.add_argument("--revision", help="Model revision/branch (e.g. v1 or v2 for ScreenVLM).")
@@ -66,12 +67,21 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Override model dtype (try float32 if mps/float16 output looks broken).")
     p.add_argument("--max-new-tokens", type=int,
                    help="Cap ScreenVLM output length (lower = much faster; default 6192).")
+    p.add_argument("--invert", action="store_true",
+                   help="Invert frame colors (dark->light) before parsing — helps "
+                        "light-trained parsers/OCR on dark-mode UIs. Cursor "
+                        "detection still uses the original frames.")
     p.add_argument("--image-max-edge", type=int, default=1024,
                    help="Downscale frames so the longest edge <= this before parsing "
                         "(big speedup on Retina screenshots; 0 disables). Default 1024.")
-    p.add_argument("--ocr", default="none", choices=["none", "tesseract", "easyocr"],
-                   help="OCR typed field values ScreenVLM omits. 'easyocr' is "
-                        "pip-only (no system binary); 'tesseract' needs the engine.")
+    p.add_argument("--ocr", default="none",
+                   choices=["none", "tesseract", "easyocr", "paddle"],
+                   help="OCR typed field values ScreenVLM omits. 'easyocr' and "
+                        "'paddle' are pip-only (no system binary); 'tesseract' "
+                        "needs the engine.")
+    p.add_argument("--ocr-version",
+                   help="PaddleOCR model version, e.g. PP-OCRv6 or PP-OCRv5 "
+                        "(needs paddleocr>=3.7 for v6). Default: library default.")
     p.add_argument("-v", "--verbose", action="store_true", help="Verbose (DEBUG) logging.")
     p.add_argument("--fps", type=float, default=1.0, help="Frame sampling rate (sample=fps).")
     p.add_argument("--sample", default="fps", choices=["fps", "keyframes", "scene"],
@@ -81,6 +91,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-frames", type=int, help="Cap frames parsed (each is one model call).")
     p.add_argument("--raw-out", help="Dir to dump ScreenVLM's raw ScreenTag per frame (debug).")
     p.add_argument("--cursor", help="A cursor records JSON to aid click disambiguation.")
+    p.add_argument("--detect-cursor", default="none", choices=["none", "template"],
+                   help="Recover cursor positions from the frames themselves "
+                        "(needs the 'cursor' extra). Ignored if --cursor is given.")
+    p.add_argument("--cursor-template",
+                   help="A crop of your OS cursor for --detect-cursor template "
+                        "(a real crop beats the synthetic fallback).")
     p.add_argument("-o", "--states-out", required=True, help="Where to write parsed states JSON.")
     p.add_argument("--trace-out", help="Also derive actions and write a normalize-ready raw trace.")
     p.add_argument("--graph", action="store_true", help="Print the induced UI state graph.")
@@ -91,7 +107,10 @@ def build_parser() -> argparse.ArgumentParser:
 def _client(args):
     if args.client == "anthropic":
         from demo2skill.video.statediff.parser.clients import AnthropicVisionClient
-        return AnthropicVisionClient()
+        return AnthropicVisionClient(args.model) if args.model else AnthropicVisionClient()
+    if args.client == "openai":
+        from demo2skill.video.statediff.parser.clients import OpenAIVisionClient
+        return OpenAIVisionClient(args.model) if args.model else OpenAIVisionClient()
     if args.client == "transformers":
         from demo2skill.video.statediff.parser.clients import TransformersScreenVLMClient
         import os
@@ -101,8 +120,27 @@ def _client(args):
     return default_screen_parser_client()
 
 
+def _load_dotenv() -> None:
+    """Load KEY=VALUE lines from a local ``.env`` into the environment (without
+    overriding anything already set). No dependency; keeps API keys out of the
+    command line."""
+    import os
+    for path in (Path.cwd() / ".env", Path(__file__).resolve().parents[3] / ".env"):
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key, val = key.strip(), val.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = val
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    _load_dotenv()
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -134,7 +172,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                                      device=args.device, dtype=args.dtype,
                                      max_new_tokens=args.max_new_tokens or 6192,
                                      max_image_edge=args.image_max_edge,
-                                     ocr=make_ocr(args.ocr))
+                                     ocr=make_ocr(args.ocr, ocr_version=args.ocr_version))
         else:
             client = _client(args)
             if client is None:
@@ -158,9 +196,37 @@ def main(argv: Optional[List[str]] = None) -> int:
         frames = Frames(frames.frames[: args.max_frames], fps=frames.fps,
                         width=frames.width, height=frames.height)
 
+    # -- recover cursor from frames (optional) --------------------------------
+    if args.detect_cursor != "none" and not args.cursor:
+        from demo2skill.video.statediff.cursor_detect import (
+            build_cursor_detector, detect_cursor_track,
+        )
+        det = build_cursor_detector(args.detect_cursor, template_path=args.cursor_template)
+        log.info("detecting cursor over %d frame(s)...", len(frames))
+        cursor = detect_cursor_track(det, frames)
+
     # -- parse ----------------------------------------------------------------
-    log.info("extracted %d frame(s); parsing with '%s'", len(frames), args.client)
-    states = parse_frames(parser, frames)
+    log.info("extracted %d frame(s); parsing with '%s'%s", len(frames), args.client,
+             " (inverted)" if args.invert else "")
+    states = parse_frames(parser, frames, invert=args.invert)
+
+    # Parse-stability gate: report count swing, then drop transient (flicker)
+    # elements so they don't flood the IDM with phantom transitions.
+    counts = [len(s.elements) for s in states]
+    if counts:
+        import statistics
+        med = statistics.median(counts) or 1
+        dev = max(abs(c - med) for c in counts)
+        log.info("parse stability: elements min=%d max=%d median=%.0f (max deviation "
+                 "%.0f%%)%s", min(counts), max(counts), med, 100 * dev / med,
+                 "  ⚠ unstable" if dev > 0.5 * med else "")
+    from demo2skill.video.statediff.stability import stabilize_states
+    stabilize_states(states)
+
+    # Temporal placeholder-vs-value classification (Option 1): reclassify field
+    # text across frames so placeholders don't masquerade as typed values.
+    from demo2skill.video.statediff.field_text import classify_field_text
+    classify_field_text(states)
 
     out = Path(args.states_out)
     out.parent.mkdir(parents=True, exist_ok=True)

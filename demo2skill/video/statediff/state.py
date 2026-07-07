@@ -32,6 +32,7 @@ class UIElement:
     focused: bool = False
     checked: Optional[bool] = None
     selected: Optional[bool] = None
+    placeholder_text: Optional[str] = None  # grey prompt text, not a typed value
 
     @property
     def center(self) -> Tuple[int, int]:
@@ -76,6 +77,22 @@ class ScreenState:
         if not hits:
             return None
         return min(hits, key=lambda e: _area(e.bbox))
+
+    def near(self, x: int, y: int, radius: float = 40.0) -> Optional[UIElement]:
+        """Nearest element whose box is within ``radius`` of the point, else None.
+
+        Used to attribute a click when the cursor dwell lands just outside a
+        control (imprecise cursor detection, sub-pixel boxes)."""
+
+        best, best_d = None, float(radius)
+        for e in self.elements:
+            x1, y1, x2, y2 = e.bbox
+            dx = max(x1 - x, 0, x - x2)
+            dy = max(y1 - y, 0, y - y2)
+            d = (dx * dx + dy * dy) ** 0.5
+            if d <= best_d:
+                best, best_d = e, d
+        return best
 
 
 # -- distances used for state dedup (sameState) ----------------------------

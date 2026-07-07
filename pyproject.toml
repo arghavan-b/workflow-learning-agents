@@ -13,10 +13,12 @@ dependencies = [
   "pydantic>=2.5",
   "pytest-playwright>=0.7.1",
   "pyyaml>=6.0",
+  "imageio-ffmpeg>=0.5",  # bundled ffmpeg binary; video decode without brew
 ]
 
 [project.optional-dependencies]
 llm = ["anthropic>=0.40"]
+openai = ["openai>=1.0"]
 # ScreenVLM is an Idefics3 checkpoint saved with transformers 4.55.2. Pin to the
 # 4.55 line — newer dev builds have renamed/removed Idefics3ImageProcessor and
 # fail to load the processor. Run this extra on Python 3.11/3.12 (see
@@ -26,6 +28,12 @@ screenvlm = ["transformers>=4.55,<4.56", "torch>=2.2", "pillow>=10.0", "accelera
 # 'tesseract' binary); 'ocr-easy' is pip-only (no binary), reusing torch.
 ocr = ["pytesseract>=0.3.10", "pillow>=10.0"]
 ocr-easy = ["easyocr>=1.7", "pillow>=10.0"]
+# PaddleOCR 3.7+ ships PP-OCRv6 (the default); 2.x caps at PP-OCRv4.
+ocr-paddle = ["paddleocr>=3.7", "paddlepaddle>=3.0", "numpy>=1.24", "pillow>=10.0"]
+# Cursor detection from frames (NumPy required; OpenCV optional for speed).
+cursor = ["numpy>=1.24", "opencv-python-headless>=4.8", "pillow>=10.0"]
+# Pip-only ffmpeg for video decoding (no brew / system install needed).
+ffmpeg = ["imageio-ffmpeg>=0.5"]
 
 [project.scripts]
 demo2skill-record = "demo2skill.recorder.playwright_recorder:main"
